@@ -42,7 +42,7 @@ resource "aws_route" "RTPubDefaultIPv4" {
   gateway_id             = aws_internet_gateway.InternetGateway.id
 }
 
-# Using hardcoded AZs instead of data source
+# Using hardcoded values instead of data sources due to permission constraints
 locals {
   availability_zones = ["us-east-1a", "us-east-1b", "us-east-1c"]
 }
@@ -394,24 +394,10 @@ resource "aws_ssm_parameter" "CWAgentConfig" {
 EOF
 }
 
-data "aws_ami" "amazon_linux_2023" {
-  most_recent = true
-  owners      = ["amazon"]
-
-  filter {
-    name   = "name"
-    values = ["al2023-ami-*-x86_64"]
-  }
-
-  filter {
-    name   = "root-device-type"
-    values = ["ebs"]
-  }
-
-  filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
-  }
+# Using hardcoded AMI ID instead of data source due to permission constraints
+locals {
+  availability_zones = ["us-east-1a", "us-east-1b", "us-east-1c"]
+  amazon_linux_2023_ami = "ami-0230bd60aa48260c6" # Amazon Linux 2023 AMI in us-east-1
 }
 
 resource "aws_security_group" "SSMAccess" {
