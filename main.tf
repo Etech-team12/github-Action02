@@ -42,14 +42,15 @@ resource "aws_route" "RTPubDefaultIPv4" {
   gateway_id             = aws_internet_gateway.InternetGateway.id
 }
 
-data "aws_availability_zones" "available" {
-  state = "available"
+# Using hardcoded AZs instead of data source
+locals {
+  availability_zones = ["us-east-1a", "us-east-1b", "us-east-1c"]
 }
 
 resource "aws_subnet" "SNPUBA" {
   vpc_id                  = aws_vpc.VPC.id
   cidr_block              = "10.16.48.0/20"
-  availability_zone       = data.aws_availability_zones.available.names[0]
+  availability_zone       = local.availability_zones[0]
   map_public_ip_on_launch = true
 
   tags = {
@@ -60,7 +61,7 @@ resource "aws_subnet" "SNPUBA" {
 resource "aws_subnet" "SNPUBB" {
   vpc_id                  = aws_vpc.VPC.id
   cidr_block              = "10.16.112.0/20"
-  availability_zone       = data.aws_availability_zones.available.names[1]
+  availability_zone       = local.availability_zones[1]
   map_public_ip_on_launch = true
 
   tags = {
@@ -71,7 +72,7 @@ resource "aws_subnet" "SNPUBB" {
 resource "aws_subnet" "SNPUBC" {
   vpc_id                  = aws_vpc.VPC.id
   cidr_block              = "10.16.176.0/20"
-  availability_zone       = data.aws_availability_zones.available.names[2]
+  availability_zone       = local.availability_zones[2]
   map_public_ip_on_launch = true
 
   tags = {
@@ -82,7 +83,7 @@ resource "aws_subnet" "SNPUBC" {
 resource "aws_subnet" "SNDBA" {
   vpc_id            = aws_vpc.VPC.id
   cidr_block        = "10.16.16.0/20"
-  availability_zone = data.aws_availability_zones.available.names[0]
+  availability_zone = local.availability_zones[0]
 
   tags = {
     Name = "sn-db-A"
@@ -92,7 +93,7 @@ resource "aws_subnet" "SNDBA" {
 resource "aws_subnet" "SNDBB" {
   vpc_id            = aws_vpc.VPC.id
   cidr_block        = "10.16.80.0/20"
-  availability_zone = data.aws_availability_zones.available.names[1]
+  availability_zone = local.availability_zones[1]
 
   tags = {
     Name = "sn-db-B"
@@ -102,7 +103,7 @@ resource "aws_subnet" "SNDBB" {
 resource "aws_subnet" "SNDBC" {
   vpc_id            = aws_vpc.VPC.id
   cidr_block        = "10.16.144.0/20"
-  availability_zone = data.aws_availability_zones.available.names[2]
+  availability_zone = local.availability_zones[2]
 
   tags = {
     Name = "sn-db-C"
@@ -112,7 +113,7 @@ resource "aws_subnet" "SNDBC" {
 resource "aws_subnet" "SNAPPA" {
   vpc_id            = aws_vpc.VPC.id
   cidr_block        = "10.16.32.0/20"
-  availability_zone = data.aws_availability_zones.available.names[0]
+  availability_zone = local.availability_zones[0]
 
   tags = {
     Name = "sn-app-A"
@@ -122,7 +123,7 @@ resource "aws_subnet" "SNAPPA" {
 resource "aws_subnet" "SNAPPB" {
   vpc_id            = aws_vpc.VPC.id
   cidr_block        = "10.16.96.0/20"
-  availability_zone = data.aws_availability_zones.available.names[1]
+  availability_zone = local.availability_zones[1]
 
   tags = {
     Name = "sn-app-B"
@@ -132,7 +133,7 @@ resource "aws_subnet" "SNAPPB" {
 resource "aws_subnet" "SNAPPC" {
   vpc_id            = aws_vpc.VPC.id
   cidr_block        = "10.16.160.0/20"
-  availability_zone = data.aws_availability_zones.available.names[2]
+  availability_zone = local.availability_zones[2]
 
   tags = {
     Name = "sn-app-C"
