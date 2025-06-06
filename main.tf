@@ -446,3 +446,4 @@ resource "aws_security_group" "SSMAccess" {
 data "aws_availability_zones" "available" {
   state = "available"
 }
+# just playing
