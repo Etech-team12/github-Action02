@@ -389,13 +389,295 @@ resource "aws_ssm_parameter" "CWAgentConfig" {
 EOF
 }
 
-# data "aws_ami" "amazon_linux_2023" {
-#   most_recent = true
-#   owners      = ["amazon"]
+data "aws_ami" "amazon_linux_2023" {
+  most_recent = true
+  owners      = ["amazon"]
 
-#   filter {
-#     name   = "name"
-#     values = ["al2023-ami-*-x86_64"]
+  filter {
+    name   = "name"
+    values = ["al2023-ami-*-x86_64"]
+  }
+
+  filter {
+    name   = "root-device-type"
+    values = ["ebs"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+}
+
+data "aws_availability_zones" "available" {
+  state = "available"
+}
+
+resource "aws_db_subnet_group" "wordpress" {
+  name       = "wordpress"
+  subnet_ids = [aws_subnet.SNDBA.id, aws_subnet.SNDBB.id, aws_subnet.SNDBC.id]
+
+  tags = {
+    Name = "WordPress DB subnet group"
+  }
+}
+
+resource "aws_db_instance" "wordpress" {
+  allocated_storage      = 20
+  storage_type           = "gp2"
+  engine                 = "mysql"
+  engine_version         = "8.0"
+  instance_class         = "db.t3.micro"
+  db_name                = "wordpress"
+  username               = "wordpress"
+  password               = "w0rdpr3ss-p4ssw0rd"  # In production, use aws_secretsmanager_secret
+  parameter_group_name   = "default.mysql8.0"
+  db_subnet_group_name   = aws_db_subnet_group.wordpress.name
+  vpc_security_group_ids = [aws_security_group.SGDatabase.id]
+  skip_final_snapshot    = true
+  multi_az               = false
+
+  tags = {
+    Name = "WordPress Database"
+  }
+}
+
+resource "aws_efs_file_system" "wordpress_efs" {
+  creation_token = "wordpress-efs"
+  encrypted      = true
+
+  tags = {
+    Name = "WordPress EFS"
+  }
+}
+
+resource "aws_efs_mount_target" "efs_mount_a" {
+  file_system_id  = aws_efs_file_system.wordpress_efs.id
+  subnet_id       = aws_subnet.SNAPPA.id
+  security_groups = [aws_security_group.SGEFS.id]
+}
+
+resource "aws_efs_mount_target" "efs_mount_b" {
+  file_system_id  = aws_efs_file_system.wordpress_efs.id
+  subnet_id       = aws_subnet.SNAPPB.id
+  security_groups = [aws_security_group.SGEFS.id]
+}
+
+resource "aws_efs_mount_target" "efs_mount_c" {
+  file_system_id  = aws_efs_file_system.wordpress_efs.id
+  subnet_id       = aws_subnet.SNAPPC.id
+  security_groups = [aws_security_group.SGEFS.id]
+}
+
+resource "aws_launch_template" "wordpress" {
+  name_prefix   = "wordpress-"
+  image_id      = data.aws_ami.amazon_linux_2023.id
+  instance_type = "t3.micro"
+  key_name      = "wordpress-key"  # Make sure this key exists or create it
+
+  iam_instance_profile {
+    name = aws_iam_instance_profile.WordpressInstanceProfile.name
+  }
+
+  network_interfaces {
+    associate_public_ip_address = true
+    security_groups             = [aws_security_group.SGWordpress.id]
+  }
+
+  user_data = base64encode(<<-EOF
+    #!/bin/bash
+    # Install necessary packages
+    dnf update -y
+    dnf install -y httpd wget php php-mysqlnd mysql amazon-cloudwatch-agent amazon-efs-utils
+
+    # Start and enable Apache
+    systemctl start httpd
+    systemctl enable httpd
+
+    # Mount EFS
+    mkdir -p /var/www/html/wp-content
+    echo "${aws_efs_file_system.wordpress_efs.id}:/ /var/www/html/wp-content efs _netdev,tls 0 0" >> /etc/fstab
+    mount -a
+
+    # Download and configure WordPress
+    cd /tmp
+    wget https://wordpress.org/latest.tar.gz
+    tar -xzf latest.tar.gz
+    cp -R wordpress/* /var/www/html/
+    
+    # Create wp-config.php
+    cat > /var/www/html/wp-config.php << 'WPCONFIG'
+    <?php
+    define('DB_NAME', '${aws_db_instance.wordpress.db_name}');
+    define('DB_USER', '${aws_db_instance.wordpress.username}');
+    define('DB_PASSWORD', '${aws_db_instance.wordpress.password}');
+    define('DB_HOST', '${aws_db_instance.wordpress.endpoint}');
+    define('DB_CHARSET', 'utf8');
+    define('DB_COLLATE', '');
+
+    define('AUTH_KEY',         'put your unique phrase here');
+    define('SECURE_AUTH_KEY',  'put your unique phrase here');
+    define('LOGGED_IN_KEY',    'put your unique phrase here');
+    define('NONCE_KEY',        'put your unique phrase here');
+    define('AUTH_SALT',        'put your unique phrase here');
+    define('SECURE_AUTH_SALT', 'put your unique phrase here');
+    define('LOGGED_IN_SALT',   'put your unique phrase here');
+    define('NONCE_SALT',       'put your unique phrase here');
+
+    $table_prefix = 'wp_';
+    define('WP_DEBUG', false);
+    if ( !defined('ABSPATH') )
+        define('ABSPATH', dirname(__FILE__) . '/');
+    require_once(ABSPATH . 'wp-settings.php');
+    WPCONFIG
+
+    # Set permissions
+    chown -R apache:apache /var/www/html/
+    chmod -R 755 /var/www/html/
+
+    # Configure CloudWatch agent
+    /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c ssm:${aws_ssm_parameter.CWAgentConfig.name}
+  EOF
+  )
+
+  tag_specifications {
+    resource_type = "instance"
+    tags = {
+      Name = "WordPress"
+    }
+  }
+}
+
+resource "aws_autoscaling_group" "wordpress" {
+  name                = "wordpress-asg"
+  vpc_zone_identifier = [aws_subnet.SNPUBA.id, aws_subnet.SNPUBB.id, aws_subnet.SNPUBC.id]
+  desired_capacity    = 2
+  min_size            = 2
+  max_size            = 4
+
+  launch_template {
+    id      = aws_launch_template.wordpress.id
+    version = "$Latest"
+  }
+
+  target_group_arns = [aws_lb_target_group.wordpress.arn]
+
+  health_check_type         = "ELB"
+  health_check_grace_period = 300
+
+  tag {
+    key                 = "Name"
+    value               = "WordPress-Instance"
+    propagate_at_launch = true
+  }
+}
+
+resource "aws_lb" "wordpress" {
+  name               = "wordpress-lb"
+  internal           = false
+  load_balancer_type = "application"
+  security_groups    = [aws_security_group.SGLoadBalancer.id]
+  subnets            = [aws_subnet.SNPUBA.id, aws_subnet.SNPUBB.id, aws_subnet.SNPUBC.id]
+
+  tags = {
+    Name = "WordPress-LB"
+  }
+}
+
+resource "aws_lb_target_group" "wordpress" {
+  name     = "wordpress-tg"
+  port     = 80
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.VPC.id
+
+  health_check {
+    path                = "/"
+    port                = "traffic-port"
+    healthy_threshold   = 2
+    unhealthy_threshold = 2
+    timeout             = 5
+    interval            = 30
+    matcher             = "200,302"
+  }
+}
+
+resource "aws_lb_listener" "wordpress" {
+  load_balancer_arn = aws_lb.wordpress.arn
+  port              = 80
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.wordpress.arn
+  }
+}
+
+resource "aws_autoscaling_policy" "wordpress_scale_up" {
+  name                   = "wordpress-scale-up"
+  scaling_adjustment     = 1
+  adjustment_type        = "ChangeInCapacity"
+  cooldown               = 300
+  autoscaling_group_name = aws_autoscaling_group.wordpress.name
+}
+
+resource "aws_cloudwatch_metric_alarm" "wordpress_cpu_high" {
+  alarm_name          = "wordpress-cpu-high"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 2
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/EC2"
+  period              = 120
+  statistic           = "Average"
+  threshold           = 80
+
+  dimensions = {
+    AutoScalingGroupName = aws_autoscaling_group.wordpress.name
+  }
+
+  alarm_description = "Scale up if CPU > 80% for 4 minutes"
+  alarm_actions     = [aws_autoscaling_policy.wordpress_scale_up.arn]
+}
+
+resource "aws_autoscaling_policy" "wordpress_scale_down" {
+  name                   = "wordpress-scale-down"
+  scaling_adjustment     = -1
+  adjustment_type        = "ChangeInCapacity"
+  cooldown               = 300
+  autoscaling_group_name = aws_autoscaling_group.wordpress.name
+}
+
+resource "aws_cloudwatch_metric_alarm" "wordpress_cpu_low" {
+  alarm_name          = "wordpress-cpu-low"
+  comparison_operator = "LessThanOrEqualToThreshold"
+  evaluation_periods  = 2
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/EC2"
+  period              = 120
+  statistic           = "Average"
+  threshold           = 20
+
+  dimensions = {
+    AutoScalingGroupName = aws_autoscaling_group.wordpress.name
+  }
+
+  alarm_description = "Scale down if CPU < 20% for 4 minutes"
+  alarm_actions     = [aws_autoscaling_policy.wordpress_scale_down.arn]
+}
+
+output "wordpress_url" {
+  description = "URL of the WordPress site"
+  value       = "http://${aws_lb.wordpress.dns_name}"
+}
+
+output "database_endpoint" {
+  description = "Endpoint of the WordPress database"
+  value       = aws_db_instance.wordpress.endpoint
+}
+
+output "efs_id" {
+  description = "ID of the EFS file system"
+  value       = aws_efs_file_system.wordpress_efs.id
+}-x86_64"]
 #   }
 # }
 
