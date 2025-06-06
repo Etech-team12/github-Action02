@@ -1,8 +1,6 @@
 name: Terraform AWS Deployment
 
-on:
-  push:
-  workflow_dispatch:
+on: push
 
 jobs:
   terraform:
