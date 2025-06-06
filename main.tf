@@ -411,6 +411,21 @@ data "aws_ami" "amazon_linux_2023" {
 
 data "aws_availability_zones" "available" {
   state = "available"
+} }
+
+  filter {
+    name   = "root-device-type"
+    values = ["ebs"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+}
+
+data "aws_availability_zones" "available" {
+  state = "available"
 }
 
 resource "aws_db_subnet_group" "wordpress" {
